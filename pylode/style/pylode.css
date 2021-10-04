@@ -1,9 +1,7 @@
+#overview {display: none;}
+td>p {margin-top: 0}
         #pylode {
-            position: fixed;
-            top: 130px;
-            left: -60px;
             font-size: small;
-            transform: rotate(-90deg);
             color: grey;
         }
         #pylode a {

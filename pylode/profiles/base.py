@@ -464,7 +464,7 @@ class BaseProfile:
         from rdflib.plugin import register, Serializer
         register('json-ld', Serializer, 'rdflib_jsonld.serializer', 'JsonLDSerializer')
 
-        return g.serialize(format="json-ld", encoding="utf-8")  # support >= rdflib 6.0.0 and ensure backwards compat (last python 2 release)
+        return g.serialize(format="json-ld").decode("utf-8")
 
     def _make_agent_link(self, name, url=None, email=None, affiliation=None):
         if self.outputformat == "md":
@@ -560,6 +560,10 @@ class BaseProfile:
             uri_of_rdf = self.source_info[0]
         else:
             uri_of_rdf = self.source_info[0].split("/")[-1]
+
+        if uri_of_rdf == "memorix.ttl":
+            return '<p>RDF [<a href="memorix.ttl">Turtle</a>] (text/turtle)</p>Derived serialisations:</p><ul><li><a href="formats/memorix.jsonld">JSON+LD</a> (application/json+ld)</li><li><a href="formats/memorix.json">RDF/JSON</a> (application/json)</li><li><a href="formats/memorix.rdf">RDF/XML</a> (application/rdf+xml)</li><li><a href="formats/memorix.nt">N-Triples</a> (application/n-triples)</li></ul><p><small><em>NB <a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Content_negotiation">Content Negotiation</a> is supported using an <code>Accept</code> Header</em></small></p>';
+
         if self.outputformat == "md":
             return 'RDF ([{}]({}))'.format(
                 uri_of_rdf, self.source_info[1]

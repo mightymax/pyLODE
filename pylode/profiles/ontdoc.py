@@ -34,6 +34,7 @@ class OntDoc(BaseProfile):
             default_language=default_language)
         self.G.bind("prov", PROV)
         self.CLASSES = collections.OrderedDict()
+        self.UI_COMPONENTS = collections.OrderedDict()
         self.PROPERTIES = collections.OrderedDict()
         self.NAMED_INDIVIDUALS = collections.OrderedDict()
 
@@ -200,7 +201,7 @@ class OntDoc(BaseProfile):
 
     def _make_fragment_uri(self, uri):
         """OntDoc Profile allows fragment URIs for Classes & Properties"""
-        if self.PROPERTIES.get(uri) or self.CLASSES.get(uri):
+        if self.PROPERTIES.get(uri) or self.CLASSES.get(uri) or self.UI_COMPONENTS.get(uri):
             if self.PROPERTIES.get(uri):
                 title = self.PROPERTIES[uri]["title"] \
                     if self.PROPERTIES[uri].get("title") is not None else self.PROPERTIES[uri]["fid"]
@@ -209,6 +210,10 @@ class OntDoc(BaseProfile):
                 title = self.CLASSES[uri]["title"] \
                     if self.CLASSES[uri].get("title") is not None else self.CLASSES[uri]["fid"]
                 uri = self.CLASSES[uri]["fid"]
+            elif self.UI_COMPONENTS.get(uri):
+                title = self.UI_COMPONENTS[uri]["title"] \
+                    if self.UI_COMPONENTS[uri].get("title") is not None else self.UI_COMPONENTS[uri]["fid"]
+                uri = self.UI_COMPONENTS[uri]["fid"]
 
             links = {
                 "md": f"[{title}](#{uri})",
@@ -439,70 +444,87 @@ class OntDoc(BaseProfile):
 
     def _extract_classes_uris(self):
         classes = []
+        uiComponents = []
         for s in self.G.subjects(predicate=RDF.type, object=RDFS.Class):
             # ignore blank nodes for things like [ owl:unionOf ( ... ) ]
             if type(s) == BNode:
                 pass
             else:
-                classes.append(str(s))
+                isUIComponent = False
+                for o in self.G.objects(subject=s, predicate=RDFS.subClassOf):
+                    if str(o) == "https://memorix.io/ontology#UIComponent":
+                        isUIComponent = True
+                        pass
+                if isUIComponent == False:
+                    classes.append(str(s))
+                else:
+                    uiComponents.append(str(s))
 
         for p in sorted(classes):
             self.CLASSES[p] = {}
 
-    def _extract_classes(self):
-        for cls in self.CLASSES.keys():
+        for p in sorted(uiComponents):
+            self.UI_COMPONENTS[p] = {}
+
+    def _extract_classes_helper(self, classes):
+
+        for cls in classes.keys():
             s = URIRef(cls)
             # create Python dict for each class
-            self.CLASSES[cls] = {
+            classes[cls] = {
                 "iri": cls
             }
 
             # basic class properties
-            self.CLASSES[cls]["title"] = None
-            self.CLASSES[cls]["description"] = None
-            self.CLASSES[cls]["scopeNote"] = None
-            self.CLASSES[cls]["examples"] = []
-            self.CLASSES[cls]["isDefinedBy"] = None
-            self.CLASSES[cls]["source"] = None
+            classes[cls]["title"] = None
+            classes[cls]["description"] = None
+            classes[cls]["scopeNote"] = None
+            classes[cls]["examples"] = []
+            classes[cls]["isDefinedBy"] = None
+            classes[cls]["seeAlso"] = None
+            classes[cls]["source"] = None
 
             for p, o in self.G.predicate_objects(subject=s):
                 if p == DCTERMS.title:
-                    self.CLASSES[cls]["title"] = str(o)
+                    classes[cls]["title"] = str(o)
 
                 if p == DCTERMS.description:
                     if self.outputformat == "md":
-                        self.CLASSES[cls]["description"] = str(o)
+                        classes[cls]["description"] = str(o)
                     elif self.outputformat == "adoc":
-                        self.CLASSES[cls]["description"] = str(o)
+                        classes[cls]["description"] = str(o)
                     else:
-                        self.CLASSES[cls]["description"] = markdown.markdown(str(o))
+                        classes[cls]["description"] = markdown.markdown(str(o))
 
                 if p == SKOS.scopeNote:
                     if self.outputformat == "md":
-                        self.CLASSES[cls]["scopeNote"] = str(o)
+                        classes[cls]["scopeNote"] = str(o)
                     elif self.outputformat == "adoc":
-                        self.CLASSES[cls]["scopeNote"] = str(o)
+                        classes[cls]["scopeNote"] = str(o)
                     else:
-                        self.CLASSES[cls]["scopeNote"] = markdown.markdown(str(o))
+                        classes[cls]["scopeNote"] = markdown.markdown(str(o))
 
                 if p == SKOS.example:
-                    self.CLASSES[cls]["examples"].append(self._make_example(o))
+                    classes[cls]["examples"].append(self._make_example(o))
 
                 if p == RDFS.isDefinedBy:
-                    self.CLASSES[cls]["isDefinedBy"] = str(o)
+                    classes[cls]["isDefinedBy"] = str(o)
+
+                if p == RDFS.seeAlso:
+                    classes[cls]["seeAlso"] = self._make_formatted_uri(o)
 
                 if p == DCTERMS.source or p == DC.source:
                     if str(o).startswith('http'):
-                        self.CLASSES[cls]["source"] = self._make_formatted_uri(o)
+                        classes[cls]["source"] = self._make_formatted_uri(o)
                     else:
-                        self.CLASSES[cls]["source"] = str(o)
+                        classes[cls]["source"] = str(o)
 
             # patch title from URI if we haven't got one
-            if self.CLASSES[cls]["title"] is None:
-                self.CLASSES[cls]["title"] = self._make_title_from_uri(cls)
+            if classes[cls]["title"] is None:
+                classes[cls]["title"] = self._make_title_from_uri(cls)
 
             # make fid
-            self.CLASSES[cls]["fid"] = self._make_fid(self.CLASSES[cls]["title"], cls)
+            classes[cls]["fid"] = self._make_fid(classes[cls]["title"], cls)
 
             # equivalent classes
             equivalent_classes = []
@@ -533,7 +555,7 @@ class OntDoc(BaseProfile):
                         collection_type = self._get_curie(str(r.col_type))
                         collection_members.append(self._get_curie(str(r.col_member)))
                     equivalent_classes.append((collection_type, collection_members))
-            self.CLASSES[cls]["equivalents"] = equivalent_classes
+            classes[cls]["equivalents"] = equivalent_classes
 
             # super classes
             supers = []
@@ -567,8 +589,8 @@ class OntDoc(BaseProfile):
                 else:
                     restrictions.append(o)
 
-            self.CLASSES[cls]["supers"] = supers
-            self.CLASSES[cls]["restrictions"] = restrictions
+            classes[cls]["supers"] = supers
+            classes[cls]["restrictions"] = restrictions
 
             # sub classes
             subs = []
@@ -597,33 +619,33 @@ class OntDoc(BaseProfile):
                         collection_type = self._get_curie(str(r.col_type))
                         collection_members.append(self._get_curie(str(r.col_member)))
                     subs.append((collection_type, collection_members))
-            self.CLASSES[cls]["subs"] = subs
+            classes[cls]["subs"] = subs
 
             in_domain_of = []
             for o in self.G.subjects(predicate=RDFS.domain, object=s):
                 in_domain_of.append(str(o))
-            self.CLASSES[cls]["in_domain_of"] = in_domain_of
+            classes[cls]["in_domain_of"] = in_domain_of
 
             in_domain_includes_of = []
             for o in self.G.subjects(predicate=SDO.domainIncludes, object=s):
                 in_domain_includes_of.append(str(o))
-            self.CLASSES[cls]["in_domain_includes_of"] = in_domain_includes_of
+            classes[cls]["in_domain_includes_of"] = in_domain_includes_of
 
             in_range_of = []
             for o in self.G.subjects(predicate=RDFS.range, object=s):
                 in_range_of.append(str(o))
-            self.CLASSES[cls]["in_range_of"] = in_range_of
+            classes[cls]["in_range_of"] = in_range_of
 
             in_range_includes_of = []
             for o in self.G.subjects(predicate=SDO.rangeIncludes, object=s):
                 in_range_includes_of.append(str(o))
-            self.CLASSES[cls]["in_range_includes_of"] = in_range_includes_of
+            classes[cls]["in_range_includes_of"] = in_range_includes_of
 
             # TODO: cater for Named Individuals of this class - "has members"
             has_members = []
             for o in self.G.subjects(predicate=RDF.type, object=s):
                 has_members.append(str(o))
-            self.CLASSES[cls]["has_members"] = has_members
+            classes[cls]["has_members"] = has_members
 
         # # sort properties by title
         # x = sorted([(k, v) for k, v in classes.items()], key=lambda tup: tup[1]['title'])
@@ -632,6 +654,10 @@ class OntDoc(BaseProfile):
         #     y[n[0]] = n[1]
         #
         # return y
+
+    def _extract_classes(self):
+        self._extract_classes_helper(self.CLASSES)
+        self._extract_classes_helper(self.UI_COMPONENTS)
 
     def _extract_properties_uris(self):
         properties = []
@@ -645,10 +671,10 @@ class OntDoc(BaseProfile):
         for prop in self.PROPERTIES.keys():
             s = URIRef(prop)
             # property type
-            if (s, RDF.type, OWL.FunctionalProperty) in self.G:
-                self.PROPERTIES[prop]["prop_type"] = "fp"
-            elif (s, RDF.type, OWL.ObjectProperty) in self.G:
+            if (s, RDF.type, OWL.ObjectProperty) in self.G:
                 self.PROPERTIES[prop]["prop_type"] = "op"
+            elif (s, RDF.type, OWL.FunctionalProperty) in self.G:
+                self.PROPERTIES[prop]["prop_type"] = "fp"
             elif (s, RDF.type, OWL.DatatypeProperty) in self.G:
                 self.PROPERTIES[prop]["prop_type"] = "dp"
             elif (s, RDF.type, OWL.AnnotationProperty) in self.G:
@@ -661,6 +687,7 @@ class OntDoc(BaseProfile):
             self.PROPERTIES[prop]["scopeNote"] = None
             self.PROPERTIES[prop]["examples"] = []
             self.PROPERTIES[prop]["isDefinedBy"] = None
+            self.PROPERTIES[prop]["seeAlso"] = None
             self.PROPERTIES[prop]["source"] = None
             self.PROPERTIES[prop]["supers"] = []
             self.PROPERTIES[prop]["subs"] = []
@@ -696,6 +723,9 @@ class OntDoc(BaseProfile):
 
                 if p == RDFS.isDefinedBy:
                     self.PROPERTIES[prop]["isDefinedBy"] = str(o)
+
+                if p == RDFS.seeAlso:
+                    self.PROPERTIES[prop]["seeAlso"] = self._make_formatted_uri(o)
 
                 if p == DCTERMS.source or p == DC.source:
                     if str(o).startswith('http'):
@@ -961,6 +991,7 @@ class OntDoc(BaseProfile):
             scopeNote=class_["scopeNote"],
             examples=class_["examples"],
             is_defined_by=class_["isDefinedBy"],
+            see_also=class_["seeAlso"],
             source=class_["source"],
             subs=class_["subs"],
             in_domain_of=class_["in_domain_of"],
@@ -968,12 +999,13 @@ class OntDoc(BaseProfile):
             in_range_of=class_["in_range_of"],
             in_range_includes_of=class_["in_range_includes_of"],
             has_members=class_["has_members"]
+            
         )
 
-    def _make_classes(self):
+    def _make_classes(self, classes, title):
         # make all the individual Classes
         classes_list = []
-        for k, v in self.CLASSES.items():
+        for k, v in classes.items():
             classes_list.append(self._make_class(k, v))
 
         # make the template for all Classes
@@ -983,8 +1015,8 @@ class OntDoc(BaseProfile):
         #     [(v.get("fid"), v.get("title")) for k, v in self.CLASSES.items()],
         #     key=lambda tup: tup[1],
         # )
-        class_index = [f"<li>{self._make_formatted_uri(x)}</li>" for x in self.CLASSES.keys()]
-        return classes_template.render(class_index=class_index, classes=classes_list, )
+        class_index = [f"<li>{self._make_formatted_uri(x)}</li>" for x in classes.keys()]
+        return classes_template.render(class_index=class_index, classes=classes_list, title=title, id=str(title).lower())
 
     def _make_property(self, property):
         # handling Markdown formatting within a table
@@ -1005,6 +1037,7 @@ class OntDoc(BaseProfile):
             scopeNote=property[1].get("scopeNote"),
             examples=property[1].get("examples"),
             is_defined_by=property[1].get("isDefinedBy"),
+            see_also=property[1].get("seeAlso"),
             source=property[1].get("source"),
             supers=property[1].get("supers"),
             subs=property[1].get("subs"),
@@ -1246,7 +1279,8 @@ class OntDoc(BaseProfile):
             schemaorg=self._make_schemaorg_metadata(),  # only does something for the HTML templates
             title=self.METADATA["title"],
             metadata=self._make_metadata(),
-            classes=self._make_classes(),
+            classes=self._make_classes(self.CLASSES, "Classes"),
+            ui_components=self._make_classes(self.UI_COMPONENTS, "UIComponents"),
             properties=self._make_properties(),
             named_individuals=self._make_named_individuals(),
             default_namespace=self.METADATA["default_namespace"],
@@ -1355,9 +1389,14 @@ class OntDoc(BaseProfile):
                 else:
                     html.append(self._make_formatted_uri(d, type="c"))
             self.PROPERTIES[uri]["rangeIncludes"] = html
+        
+        self.cross_link_classes(self.CLASSES)
+        self.cross_link_classes(self.UI_COMPONENTS)
+        return self._make_document()
 
+    def cross_link_classes(self, classes):
         # crosslinking classes
-        for uri, cls in self.CLASSES.items():
+        for uri, cls in classes.items():
             html = []
             for d in cls["equivalents"]:
                 if type(d) == tuple:
@@ -1365,7 +1404,7 @@ class OntDoc(BaseProfile):
                         html.append(self._make_formatted_uri(m, type="c"))
                 else:
                     html.append(self._make_formatted_uri(d, type="c"))
-            self.CLASSES[uri]["equivalents"] = html
+            classes[uri]["equivalents"] = html
 
             html = []
             for d in cls["supers"]:
@@ -1373,12 +1412,12 @@ class OntDoc(BaseProfile):
                     html.append(self._make_collection_class_html(d[0], d[1]))
                 else:
                     html.append(self._make_formatted_uri(d, type="c"))
-            self.CLASSES[uri]["supers"] = html
+            classes[uri]["supers"] = html
 
             html = []
             for d in cls["restrictions"]:
                 html.append(self._make_restriction_html(uri, d))
-            self.CLASSES[uri]["restrictions"] = html
+            classes[uri]["restrictions"] = html
 
             html = []
             for d in cls["subs"]:
@@ -1387,7 +1426,7 @@ class OntDoc(BaseProfile):
                         html.append(self._make_formatted_uri(m, type="c"))
                 else:
                     html.append(self._make_formatted_uri(d, type="c"))
-            self.CLASSES[uri]["subs"] = html
+            classes[uri]["subs"] = html
 
             html = []
             for p in cls["in_domain_of"]:
@@ -1397,7 +1436,7 @@ class OntDoc(BaseProfile):
                     else None
                 )
                 html.append(self._make_formatted_uri(p, type=prop_type))
-            self.CLASSES[uri]["in_domain_of"] = html
+            classes[uri]["in_domain_of"] = html
 
             html = []
             for p in cls["in_domain_includes_of"]:
@@ -1407,7 +1446,7 @@ class OntDoc(BaseProfile):
                     else None
                 )
                 html.append(self._make_formatted_uri(p, type=prop_type))
-            self.CLASSES[uri]["in_domain_includes_of"] = html
+            classes[uri]["in_domain_includes_of"] = html
 
             html = []
             for p in cls["in_range_of"]:
@@ -1417,7 +1456,7 @@ class OntDoc(BaseProfile):
                     else None
                 )
                 html.append(self._make_formatted_uri(p, type=prop_type))
-            self.CLASSES[uri]["in_range_of"] = html
+            classes[uri]["in_range_of"] = html
 
             html = []
             for p in cls["in_range_includes_of"]:
@@ -1427,7 +1466,7 @@ class OntDoc(BaseProfile):
                     else None
                 )
                 html.append(self._make_formatted_uri(p, type=prop_type))
-            self.CLASSES[uri]["in_range_includes_of"] = html
+            classes[uri]["in_range_includes_of"] = html
 
             html = []
             for p in cls["has_members"]:
@@ -1437,6 +1476,4 @@ class OntDoc(BaseProfile):
                     else None
                 )
                 html.append(self._make_formatted_uri(p, type=prop_type))
-            self.CLASSES[uri]["has_members"] = html
-
-        return self._make_document()
+            classes[uri]["has_members"] = html
